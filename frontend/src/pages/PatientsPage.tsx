@@ -2,15 +2,15 @@ import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { supabase } from '../lib/supabase'
 import PatientForm from '../components/PatientForm'
+import type { Patient } from '../types/patient'
+import PatientDetailsModal from '../components/PatientDetailsModal'
 
-type Patient = {
-    id: string
-    full_name: string
-    preferred_name: string | null
-    birth_date: string | null
-    phone: string | null
-    active: boolean
-}
+type StatusFilter = 'all' | 'active' | 'inactive'
+
+type FormState =
+    | { mode: 'create' }
+    | { mode: 'edit'; patient: Patient }
+    | null
 
 type ResultState =
     | { status: 'loading' }
@@ -20,7 +20,10 @@ type ResultState =
 type ResultsProps = {
     clinicId: string
     search: string
+    statusFilter: StatusFilter
     page: number
+    editingDisabled: boolean
+    onEdit: (patient: Patient) => void
     onPrevious: () => void
     onNext: () => void
     onRetry: () => void
@@ -31,7 +34,10 @@ const PAGE_SIZE = 20
 function PatientResults({
     clinicId,
     search,
+    statusFilter,
     page,
+    editingDisabled,
+    onEdit,
     onPrevious,
     onNext,
     onRetry,
@@ -39,6 +45,9 @@ function PatientResults({
     const [result, setResult] = useState<ResultState>({
         status: 'loading',
     })
+
+    const [selectedPatient, setSelectedPatient] =
+        useState<Patient | null>(null)
 
     useEffect(() => {
         const controller = new AbortController()
@@ -48,7 +57,7 @@ function PatientResults({
                 let query = supabase
                     .from('patients')
                     .select(
-                        'id, full_name, preferred_name, birth_date, phone, active',
+                        'id, clinic_id, full_name, preferred_name, birth_date, email, phone, guardian_name, guardian_phone, guardian_relationship, administrative_notes, active, updated_at',
                         { count: 'exact' },
                     )
                     .eq('clinic_id', clinicId)
@@ -58,6 +67,10 @@ function PatientResults({
                 if (search) {
                     const escaped = search.replace(/[\\%_]/g, '\\$&')
                     query = query.ilike('full_name', `%${escaped}%`)
+                }
+
+                if (statusFilter !== 'all') {
+                    query = query.eq('active', statusFilter === 'active')
                 }
 
                 const first = page * PAGE_SIZE
@@ -91,7 +104,7 @@ function PatientResults({
         void loadPatients()
 
         return () => controller.abort()
-    }, [clinicId, search, page])
+    }, [clinicId, search, statusFilter, page])
 
     if (result.status === 'loading') {
         return <p className="empty-state" role="status">Carregando pacientes…</p>
@@ -118,11 +131,9 @@ function PatientResults({
 
             {result.patients.length === 0 ? (
                 <div className="empty-state">
-                    <h3>{search ? 'Nenhum resultado' : 'Nenhum paciente disponível'}</h3>
+                    <h3>Nenhum paciente encontrado</h3>
                     <p className="muted">
-                        {search
-                            ? 'Tente buscar por outra parte do nome.'
-                            : 'Os pacientes disponíveis para sua conta aparecerão aqui.'}
+                        Confira os filtros ou cadastre um novo paciente.
                     </p>
                 </div>
             ) : (
@@ -137,15 +148,26 @@ function PatientResults({
                                 <th scope="col">Nascimento</th>
                                 <th scope="col">Telefone</th>
                                 <th scope="col">Situação</th>
+                                <th scope="col">Ações</th>
                             </tr>
                         </thead>
                         <tbody>
                             {result.patients.map((patient) => (
                                 <tr key={patient.id}>
                                     <td>
-                                        <strong>{patient.full_name}</strong>
+                                        <button
+                                            type="button"
+                                            className="patient-name-button"
+                                            onClick={() => setSelectedPatient(patient)}
+                                            aria-label={`Abrir ficha de ${patient.full_name}`}
+                                        >
+                                            {patient.full_name}
+                                        </button>
                                         {patient.preferred_name && (
                                             <small>Prefere: {patient.preferred_name}</small>
+                                        )}
+                                        {patient.administrative_notes && (
+                                            <small>Com observação administrativa</small>
                                         )}
                                     </td>
                                     <td>
@@ -158,6 +180,16 @@ function PatientResults({
                                         <span className={`patient-status ${patient.active ? 'active' : 'inactive'}`}>
                                             {patient.active ? 'Ativo' : 'Inativo'}
                                         </span>
+                                    </td>
+                                    <td>
+                                        <button
+                                            className="secondary-button"
+                                            disabled={editingDisabled}
+                                            onClick={() => onEdit(patient)}
+                                            aria-label={`Editar cadastro de ${patient.full_name}`}
+                                        >
+                                            Editar
+                                        </button>
                                     </td>
                                 </tr>
                             ))}
@@ -182,17 +214,32 @@ function PatientResults({
                 >
                     Próxima
                 </button>
-            </div>
+                {selectedPatient && (
+                    <PatientDetailsModal
+                        patient={selectedPatient}
+                        editDisabled={editingDisabled}
+                        onClose={() => setSelectedPatient(null)}
+                        onEdit={(patient) => {
+                            setSelectedPatient(null)
+                            onEdit(patient)
+                            onEdit(patient)
+                        }}
+                    />
+                )}
+            )
+        </div >
         </>
+
     )
 }
 
 export default function PatientsPage({ clinicId }: { clinicId: string }) {
     const [input, setInput] = useState('')
     const [search, setSearch] = useState('')
+    const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
     const [page, setPage] = useState(0)
     const [revision, setRevision] = useState(0)
-    const [showForm, setShowForm] = useState(false)
+    const [formState, setFormState] = useState<FormState>(null)
     const [savedMessage, setSavedMessage] = useState('')
 
     function handleSearch(event: FormEvent<HTMLFormElement>) {
@@ -205,20 +252,32 @@ export default function PatientsPage({ clinicId }: { clinicId: string }) {
     function clearSearch() {
         setInput('')
         setSearch('')
+        setStatusFilter('all')
         setPage(0)
         setRevision((current) => current + 1)
     }
 
-    function handlePatientSaved(name: string) {
-        setShowForm(false)
-        setSavedMessage(`Cadastro de ${name} realizado com sucesso.`)
-
-        // Filtrar pelo nome cadastrado para facilitar a conferência.
+    function handlePatientSaved(name: string, edited: boolean) {
+        setFormState(null)
+        setSavedMessage(
+            edited
+                ? `Cadastro de ${name} atualizado com sucesso.`
+                : `Cadastro de ${name} realizado com sucesso.`,
+        )
         setInput(name)
         setSearch(name)
+        setStatusFilter('all')
         setPage(0)
         setRevision((current) => current + 1)
     }
+
+    function openEdit(patient: Patient) {
+        setSavedMessage('')
+        setFormState({ mode: 'edit', patient })
+    }
+
+    const initialPatient =
+        formState?.mode === 'edit' ? formState.patient : undefined
 
     return (
         <section className="patients-page">
@@ -226,15 +285,15 @@ export default function PatientsPage({ clinicId }: { clinicId: string }) {
                 <div>
                     <p className="eyebrow">CADASTROS</p>
                     <h1>Pacientes</h1>
-                    <p className="muted">Consulte os pacientes da sua clínica.</p>
+                    <p className="muted">Consulte e atualize os pacientes da sua clínica.</p>
                 </div>
 
                 <button
                     type="button"
-                    disabled={showForm}
+                    disabled={formState !== null}
                     onClick={() => {
                         setSavedMessage('')
-                        setShowForm(true)
+                        setFormState({ mode: 'create' })
                     }}
                 >
                     Novo paciente
@@ -242,16 +301,16 @@ export default function PatientsPage({ clinicId }: { clinicId: string }) {
             </div>
 
             {savedMessage && (
-                <p className="connection-status" role="status">
-                    {savedMessage}
-                </p>
+                <p className="connection-status" role="status">{savedMessage}</p>
             )}
 
-            {showForm && (
+            {formState && (
                 <PatientForm
+                    key={initialPatient?.id ?? 'new'}
                     clinicId={clinicId}
+                    initialPatient={initialPatient}
                     onSaved={handlePatientSaved}
-                    onCancel={() => setShowForm(false)}
+                    onCancel={() => setFormState(null)}
                 />
             )}
 
@@ -266,6 +325,23 @@ export default function PatientsPage({ clinicId }: { clinicId: string }) {
                         maxLength={100}
                     />
                 </div>
+
+                <div className="field status-filter">
+                    <label htmlFor="patient-status-filter">Situação</label>
+                    <select
+                        id="patient-status-filter"
+                        value={statusFilter}
+                        onChange={(event) => {
+                            setStatusFilter(event.target.value as StatusFilter)
+                            setPage(0)
+                        }}
+                    >
+                        <option value="all">Todos</option>
+                        <option value="active">Ativos</option>
+                        <option value="inactive">Inativos</option>
+                    </select>
+                </div>
+
                 <button type="submit">Buscar</button>
                 <button
                     className="secondary-button"
@@ -277,10 +353,13 @@ export default function PatientsPage({ clinicId }: { clinicId: string }) {
             </form>
 
             <PatientResults
-                key={JSON.stringify([clinicId, search, page, revision])}
+                key={JSON.stringify([clinicId, search, statusFilter, page, revision])}
                 clinicId={clinicId}
                 search={search}
+                statusFilter={statusFilter}
                 page={page}
+                editingDisabled={formState !== null}
+                onEdit={openEdit}
                 onPrevious={() => setPage((current) => Math.max(0, current - 1))}
                 onNext={() => setPage((current) => current + 1)}
                 onRetry={() => setRevision((current) => current + 1)}
