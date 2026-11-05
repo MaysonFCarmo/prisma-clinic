@@ -3,6 +3,7 @@ import type { FormEvent } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { supabase } from './lib/supabase'
 import './App.css'
+import Workspace from './components/Workspace'
 
 function Login() {
   const [email, setEmail] = useState('')
@@ -117,7 +118,12 @@ function Login() {
 type AccountState =
   | { status: 'loading' }
   | { status: 'error'; message: string }
-  | { status: 'ready'; fullName: string; clinicName: string }
+  | {
+    status: 'ready'
+    fullName: string
+    clinicName: string
+    clinicId: string
+  }
 
 function Account({ session }: { session: Session }) {
   const [account, setAccount] = useState<AccountState>({
@@ -162,6 +168,7 @@ function Account({ session }: { session: Session }) {
             status: 'ready',
             fullName: profile.full_name,
             clinicName: clinic.name,
+            clinicId: profile.clinic_id
           })
         }
       } catch (error) {
@@ -212,7 +219,13 @@ function Account({ session }: { session: Session }) {
         </button>
       </header>
 
-      <section className="account-card">
+      <section
+        className={
+          account.status === 'ready'
+            ? 'workspace-container'
+            : 'account-card'
+        }
+      >
         {account.status === 'loading' && (
           <p role="status">Carregando seu perfil…</p>
         )}
@@ -230,18 +243,11 @@ function Account({ session }: { session: Session }) {
         )}
 
         {account.status === 'ready' && (
-          <>
-            <p className="eyebrow">ACESSO CONFIRMADO</p>
-            <h1>Olá, {account.fullName}.</h1>
-            <p className="muted">{account.clinicName}</p>
-            <div className="connection-status">
-              Login e consulta ao perfil realizados com sucesso.
-            </div>
-            <p className="muted">
-              Este é o ponto de partida da sua área de trabalho.
-              Os módulos serão adicionados nas próximas etapas.
-            </p>
-          </>
+          <Workspace
+            clinicId={account.clinicId}
+            fullName={account.fullName}
+            clinicName={account.clinicName}
+          />
         )}
 
         {signOutError && (
